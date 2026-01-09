@@ -1,0 +1,64 @@
+package com.eazybytes.accounts.service.impl;
+
+import com.eazybytes.accounts.dto.AccountsDto;
+import com.eazybytes.accounts.dto.CardsDto;
+import com.eazybytes.accounts.dto.CustomerDetailsDto;
+import com.eazybytes.accounts.dto.LoansDto;
+import com.eazybytes.accounts.entity.Accounts;
+import com.eazybytes.accounts.entity.Customer;
+import com.eazybytes.accounts.exception.ResourceNotFoundException;
+import com.eazybytes.accounts.mapper.AccountsMapper;
+import com.eazybytes.accounts.mapper.CustomerMapper;
+import com.eazybytes.accounts.repository.AccountsRepository;
+import com.eazybytes.accounts.repository.CustomerRepository;
+import com.eazybytes.accounts.service.ICustomersService;
+import com.eazybytes.accounts.service.client.CardsFeignClient;
+import com.eazybytes.accounts.service.client.LoansFeignClient;
+import io.micrometer.core.ipc.http.HttpSender;
+import lombok.AllArgsConstructor;
+import org.springframework.http.ResponseEntity;
+import org.springframework.stereotype.Service;
+
+@Service
+@AllArgsConstructor
+public class CustomersServiceImpl implements ICustomersService {
+
+    private AccountsRepository accountsRepository;
+    private CustomerRepository customerRepository;
+    private CardsFeignClient cardsFeignClient;
+    private LoansFeignClient loansFeignClient;
+
+
+    /**
+     * Fetches customer details based on the provided mobile number and correlation ID.
+     *
+     * @param mobileNumber  The mobile number of the customer.
+     * @param correlationId The correlation ID for tracking the request.
+     * @return CustomerDetailsDto containing the customer's details.
+     */
+    @Override
+    public CustomerDetailsDto fetchCustomerDetails(String mobileNumber, String correlationId) {
+        Customer customer = customerRepository.findByMobileNumber(mobileNumber).orElseThrow(
+                () -> new ResourceNotFoundException("Customer", "MobileNumber", mobileNumber)
+        );
+
+        Accounts accounts = accountsRepository.findByCustomerId(customer.getCustomerId()).orElseThrow(
+                () -> new ResourceNotFoundException("Account", "CustomerId", customer.getCustomerId().toString())
+        );
+
+        CustomerDetailsDto customerDetailsDto = CustomerMapper.mapToCustomerDetailsDto(customer, new CustomerDetailsDto());
+        customerDetailsDto.setAccountsDto(AccountsMapper.mapToAccountsDto(accounts, new AccountsDto()));
+
+        ResponseEntity<LoansDto> loansDtoResponseEntity = loansFeignClient.fetchLoanDetails(correlationId, mobileNumber);
+        if (loansDtoResponseEntity != null && loansDtoResponseEntity.getBody() != null) {
+            customerDetailsDto.setLoansDto(loansDtoResponseEntity.getBody());
+        }
+
+        ResponseEntity<CardsDto> cardsDtoResponseEntity = cardsFeignClient.fetchCardDetails(correlationId, mobileNumber);
+        if (cardsDtoResponseEntity != null && cardsDtoResponseEntity.getBody() != null) {
+            customerDetailsDto.setCardsDto(cardsDtoResponseEntity.getBody());
+        }
+
+        return customerDetailsDto;
+    }
+}
